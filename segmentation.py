@@ -118,56 +118,41 @@ def process_frame(frame, interpreter, input_details, output_details, lcd_display
 def main():
     if not download_model():
         return
-    
+
     interpreter, input_details, output_details = load_model()
     if interpreter is None:
         return
-    
+
     try:
         lcd = LCDDisplay()
         print("LCD display initialized successfully")
     except Exception as e:
         print(f"Error initializing LCD display: {e}")
         lcd = None
-    
+
     print("Initializing camera...")
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    
-    if not cap.isOpened():
-        print("DirectShow failed, trying default backend...")
-        cap = cv2.VideoCapture(0)
-    
+    cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Could not open camera")
         return
-    
-    ret, test_frame = cap.read()
-    if not ret:
-        print("Error: Could not read frame from camera")
-        return
-    
+
     print("\nCamera initialized successfully")
-    print("Press 'q' to quit")
-    
+    print("Tekan [SPACE] untuk ambil gambar, [q] untuk keluar.")
+
     try:
         while True:
-            start_time = time.time()
-            
-            ret, frame = cap.read()
-            if not ret:
-                print("Error: Could not read frame")
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('q'):
                 break
-            
-            result = process_frame(frame, interpreter, input_details, output_details, lcd)
-            cv2.imshow("Segmentation and Measurement", result)
-            
-            elapsed_time = time.time() - start_time
-            remaining_time = FRAME_INTERVAL - elapsed_time
-            if remaining_time > 0:
-                time.sleep(remaining_time)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            elif key == 32:  # Tombol 'SPACE'
+                ret, frame = cap.read()
+                if not ret:
+                    print("Error: Tidak bisa ambil gambar.")
+                    continue
+
+                result = process_frame(frame, interpreter, input_details, output_details, lcd)
+                cv2.imshow("Hasil Segmentasi", result)
+
     finally:
         cap.release()
         cv2.destroyAllWindows()
