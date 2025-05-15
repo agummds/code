@@ -12,8 +12,7 @@ MODEL_URL = "https://raw.githubusercontent.com/agummds/Mask-RCNN-TA/master/model
 MODEL_PATH = "model.tflite"
 FIXED_DISTANCE = 150  # cm
 PIXEL_TO_CM = 0.187  # cm per pixel
-MODEL_INPUT_SIZE = 640  # Keeping original model size
-PROCESS_EVERY_N_FRAMES = 3  # Only process every 3rd frame
+MODEL_INPUT_SIZE = 640
 
 # Initialize MQTT client
 mqtt_client = MQTTClient()
@@ -37,11 +36,7 @@ def download_model():
 def load_model():
     """Load and initialize TFLite model"""
     try:
-        # Set num_threads for better performance on RPi
-        interpreter = tf.lite.Interpreter(
-            model_path=MODEL_PATH,
-            num_threads=4  # Adjust based on your RPi's core count
-        )
+        interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
@@ -52,10 +47,11 @@ def load_model():
 
 def process_frame(frame, interpreter, input_details, output_details, lcd_display=None):
     """Process a single frame for body segmentation and measurement"""
-    start_time = time.time()
+    # Convert frame to grayscale
+    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_gray = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for visualization
     
-    # Resize to match model input size exactly
-    # This is necessary because camera might not support exact 640x640 resolution
+    # Resize frame to model input size
     input_size = (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
     frame_resized = cv2.resize(frame, input_size)
     
@@ -74,63 +70,70 @@ def process_frame(frame, interpreter, input_details, output_details, lcd_display
     if len(mask.shape) == 3:
         mask = mask[:, :, 0]  # Take first channel only
     
-    # Convert to binary mask
+    # Convert to binary mask and clean up
     mask = (mask > 0.5).astype(np.uint8) * 255
+    mask = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
     
-    # Resize mask back to original frame size for visualization
-    mask_resized = cv2.resize(mask, (frame.shape[1], frame.shape[0]))
+    # Invert the mask to highlight the body instead of background
+    mask = cv2.bitwise_not(mask)
     
-    # Use simpler morphological operations
-    kernel = np.ones((3, 3), np.uint8)  # Smaller kernel
-    mask_resized = cv2.morphologyEx(mask_resized, cv2.MORPH_CLOSE, kernel)
+    # Apply morphological operations to clean up the mask
+    kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     
     # Find contours
-    contours, _ = cv2.findContours(mask_resized, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Create visualization
-    result = frame.copy()
+    # Create visualization using grayscale frame
+    result = frame_gray.copy()
     
-    if contours and len(contours) > 0:
-        try:
-            # Get largest contour (assuming it's the body)
-            largest_contour = max(contours, key=cv2.contourArea)
-            
-            # Get bounding box
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Draw bounding box
-            cv2.rectangle(result, (x, y), (x + w, y + h), (0, 0, 255), 2)
-            
-            # Calculate measurements
-            width_cm = w * PIXEL_TO_CM
-            height_cm = h * PIXEL_TO_CM
-            
-            # Send measurements through MQTT
-            mqtt_client.publish_measurement(
-                height_cm=height_cm,
-                width_cm=width_cm,
-                confidence=1.0,
-                class_id=1
-            )
-            
-            # Add measurements to frame with simpler text
-            measurements = f"W: {width_cm:.1f}cm H: {height_cm:.1f}cm"
-            cv2.putText(result, measurements, (x, y - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            
-            # Update LCD display if available
-            if lcd_display is not None:
-                lcd_display.display_measurements(width_cm, height_cm)
-        except Exception as e:
-            print(f"Error processing contours: {e}")
+    if contours:
+        # Get largest contour (assuming it's the body)
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        # Get bounding box
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Draw segmentation mask with transparency
+        mask_color = np.zeros_like(frame_gray)
+        mask_color[mask > 0] = [0, 255, 0]  # Green mask
+        result = cv2.addWeighted(result, 0.7, mask_color, 0.3, 0)
+        
+        # Draw bounding box
+        cv2.rectangle(result, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        
+        # Calculate measurements
+        width_cm = w * PIXEL_TO_CM
+        height_cm = h * PIXEL_TO_CM
+        
+        # Send measurements through MQTT
+        mqtt_client.publish_measurement(
+            height_cm=height_cm,
+            width_cm=width_cm,
+            confidence=1.0,  # Since we're using the largest contour
+            class_id=1  # Assuming 1 for body
+        )
+        
+        # Add measurements to frame with background for better visibility
+        measurements = f"W: {width_cm:.1f}cm H: {height_cm:.1f}cm"
+        text_size = cv2.getTextSize(measurements, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        cv2.rectangle(result, (x, y - text_size[1] - 10), 
+                     (x + text_size[0], y), (0, 0, 0), -1)
+        cv2.putText(result, measurements, (x, y - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Print measurements to terminal
+        print(f"\nBody measurements at {FIXED_DISTANCE}cm distance:")
+        print(f"Width: {width_cm:.1f} cm")
+        print(f"Height: {height_cm:.1f} cm")
+        print(f"Pixel dimensions: {w}x{h}")
+        
+        # Update LCD display if available
+        if lcd_display is not None:
+            lcd_display.display_measurements(width_cm, height_cm)
     
-    # Calculate and display FPS
-    process_time = time.time() - start_time
-    fps = 1.0 / process_time if process_time > 0 else 0
-    cv2.putText(result, f"FPS: {fps:.1f}", (10, 30), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    
-    return result, fps
+    return result
 
 def main():
     # Download and load model
@@ -141,10 +144,6 @@ def main():
     if interpreter is None:
         return
     
-    # Check input shape expected by model
-    input_shape = input_details[0]['shape']
-    print(f"Model expects input shape: {input_shape}")
-    
     # Initialize LCD display
     try:
         lcd = LCDDisplay()
@@ -153,43 +152,17 @@ def main():
         print(f"Error initializing LCD display: {e}")
         lcd = None
     
-    # Try different capture methods for better compatibility
+    # Initialize camera with minimal settings
     print("Initializing camera...")
-    cap = None
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Try DirectShow first for faster initialization
     
-    # Try different backends
-    for backend in [cv2.CAP_ANY, cv2.CAP_V4L2, cv2.CAP_GSTREAMER]:
-        try:
-            cap = cv2.VideoCapture(0, backend)
-            if cap.isOpened():
-                print(f"Successfully opened camera with backend {backend}")
-                break
-        except Exception:
-            continue
-    
-    # If all backends failed, try default
-    if cap is None or not cap.isOpened():
-        print("Trying default camera...")
+    if not cap.isOpened():
+        print("DirectShow failed, trying default backend...")
         cap = cv2.VideoCapture(0)
-    
+        
     if not cap.isOpened():
         print("Error: Could not open camera")
         return
-    
-    # Set camera properties - try to get closest to model input size
-    # Note: Camera may not support exactly 640x640
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, MODEL_INPUT_SIZE)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, MODEL_INPUT_SIZE)
-    
-    # Try to reduce frame rate to save processing power
-    cap.set(cv2.CAP_PROP_FPS, 15)
-    
-    # Get actual camera resolution (may differ from requested)
-    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"\nCamera actual resolution: {actual_width}x{actual_height}")
-    print(f"Processing every {PROCESS_EVERY_N_FRAMES}th frame")
-    print("Press 'q' to quit")
     
     # Quick test frame
     ret, test_frame = cap.read()
@@ -197,50 +170,24 @@ def main():
         print("Error: Could not read frame from camera")
         return
     
-    frame_count = 0
-    fps_avg = 0
-    last_process_time = time.time()
+    print("\nCamera initialized successfully")
+    print("Press 'q' to quit")
     
     try:
         while True:
-            # Limit frame rate by adding small delay
-            if time.time() - last_process_time < 0.01:  # ~100fps max
-                time.sleep(0.01)
-                
             ret, frame = cap.read()
             if not ret:
                 print("Error: Could not read frame")
                 break
-                
-            frame_count += 1
-            last_process_time = time.time()
             
-            # Only process every N frames
-            if frame_count % PROCESS_EVERY_N_FRAMES == 0:
-                try:
-                    # Process frame
-                    result, fps = process_frame(frame, interpreter, input_details, output_details, lcd)
-                    fps_avg = 0.9 * fps_avg + 0.1 * fps  # Smooth FPS calculation
-                    
-                    # Show result
-                    cv2.imshow("Segmentation and Measurement", result)
-                except Exception as e:
-                    print(f"Error processing frame: {e}")
-                    # Show original frame if processing fails
-                    cv2.imshow("Segmentation and Measurement", frame)
-            else:
-                # For skipped frames, just show the original frame with FPS
-                try:
-                    copy_frame = frame.copy()
-                    cv2.putText(copy_frame, f"FPS: {fps_avg:.1f}", (10, 30), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    cv2.imshow("Segmentation and Measurement", copy_frame)
-                except Exception as e:
-                    print(f"Error displaying frame: {e}")
+            # Process frame
+            result = process_frame(frame, interpreter, input_details, output_details, lcd)
+            
+            # Show result
+            cv2.imshow("Segmentation and Measurement", result)
             
             # Break on 'q' key
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     finally:
         # Cleanup
@@ -251,4 +198,4 @@ def main():
         mqtt_client.disconnect()  # Disconnect MQTT client
 
 if __name__ == "__main__":
-    main()
+    main() 
