@@ -116,13 +116,14 @@ def process_frame(frame, interpreter, input_details, output_details, lcd_display
     return result
 
 def main():
+    # Download dan load model
     if not download_model():
         return
-
     interpreter, input_details, output_details = load_model()
     if interpreter is None:
         return
 
+    # Inisialisasi LCD display
     try:
         lcd = LCDDisplay()
         print("LCD display initialized successfully")
@@ -130,35 +131,52 @@ def main():
         print(f"Error initializing LCD display: {e}")
         lcd = None
 
-    print("Initializing camera...")
-    cap = cv2.VideoCapture(0)
+    # Inisialisasi kamera
+    print("Menghidupkan kamera...")
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        print("Error: Could not open camera")
+        cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Kamera tidak bisa dibuka.")
         return
 
-    print("\nCamera initialized successfully")
-    print("Tekan [SPACE] untuk ambil gambar, [q] untuk keluar.")
+    print("Tekan SPASI untuk mengambil gambar, atau 'q' untuk keluar.")
 
-    try:
-        while True:
-            key = cv2.waitKey(0) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == 32:  # Tombol 'SPACE'
-                ret, frame = cap.read()
-                if not ret:
-                    print("Error: Tidak bisa ambil gambar.")
-                    continue
+    frame = None
+    while True:
+        ret, preview = cap.read()
+        if not ret:
+            print("Gagal membaca frame.")
+            break
 
-                result = process_frame(frame, interpreter, input_details, output_details, lcd)
-                cv2.imshow("Hasil Segmentasi", result)
+        cv2.imshow("Preview Kamera", preview)
+        key = cv2.waitKey(1) & 0xFF
 
-    finally:
-        cap.release()
+        if key == ord(' '):  # tombol SPASI ditekan
+            frame = preview.copy()
+            print("Gambar diambil.")
+            break
+        elif key == ord('q'):
+            print("Keluar tanpa mengambil gambar.")
+            cap.release()
+            cv2.destroyAllWindows()
+            return
+
+    cap.release()
+    cv2.destroyWindow("Preview Kamera")
+
+    if frame is not None:
+        print("Memproses gambar...")
+        result = process_frame(frame, interpreter, input_details, output_details, lcd)
+        cv2.imshow("Hasil Deteksi", result)
+        print("Tekan tombol apa saja untuk keluar...")
+        cv2.waitKey(0)
         cv2.destroyAllWindows()
-        if lcd is not None:
-            lcd.cleanup()
-        mqtt_client.disconnect()
+
+    if lcd is not None:
+        lcd.cleanup()
+    mqtt_client.disconnect()
+
 
 if __name__ == "__main__":
     main()
