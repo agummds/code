@@ -14,8 +14,6 @@ MODEL_PATH = "model.tflite"
 FIXED_DISTANCE = 150  # cm
 CAMERA_FOV = 70  # derajat, sesuaikan dengan FOV horizontal kamera kamu
 RESOLUTION_WIDTH = 640  # sesuaikan dengan resolusi input model
-PIXEL_TO_CM = hitung_pixel_to_cm(FIXED_DISTANCE, CAMERA_FOV, RESOLUTION_WIDTH)
-MODEL_INPUT_SIZE = 640
 
 TARGET_FPS = 10
 FRAME_INTERVAL = 1.0 / TARGET_FPS
@@ -29,6 +27,9 @@ def hitung_pixel_to_cm(jarak_cm, fov_derajat, resolusi_horizontal):
     fov_rad = math.radians(fov_derajat / 2)
     lebar_cm = 2 * math.tan(fov_rad) * jarak_cm
     return lebar_cm / resolusi_horizontal
+
+PIXEL_TO_CM = hitung_pixel_to_cm(FIXED_DISTANCE, CAMERA_FOV, RESOLUTION_WIDTH)
+MODEL_INPUT_SIZE = 640
 
 def download_model():
     """Download the TFLite model if not exists"""
