@@ -58,13 +58,31 @@ def load_model():
         print(f"Error loading model: {e}")
         return None, None, None
 
+def resize_with_padding(image, target_size):
+    h, w = image.shape[:2]
+    scale = target_size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(image, (new_w, new_h))
+
+    pad_w = target_size - new_w
+    pad_h = target_size - new_h
+    top = pad_h // 2
+    bottom = pad_h - top
+    left = pad_w // 2
+    right = pad_w - left
+
+    padded = cv2.copyMakeBorder(resized, top, bottom, left, right,
+                                cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    return padded
+
 def process_frame(frame, interpreter, input_details, output_details, lcd_display=None):
     """Process a single frame for body segmentation and measurement"""
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame_gray = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
     
     input_size = (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
-    frame_resized = cv2.resize(frame, input_size)
+    frame_resized = resize_with_padding(frame, MODEL_INPUT_SIZE)
+
     
     input_data = frame_resized.astype(np.float32) / 255.0
     input_data = np.expand_dims(input_data, axis=0)
