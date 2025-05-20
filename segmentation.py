@@ -77,8 +77,6 @@ def resize_with_padding(image, target_size):
 
 def process_frame(frame, interpreter, input_details, output_details, lcd_display=None):
     """Process a single frame for body segmentation and measurement"""
-    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame_gray = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
     
     input_size = (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)
     frame_resized = resize_with_padding(frame, MODEL_INPUT_SIZE)
@@ -104,13 +102,13 @@ def process_frame(frame, interpreter, input_details, output_details, lcd_display
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    result = frame_gray.copy()
+    result = frame.copy()
     
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
         x, y, w, h = cv2.boundingRect(largest_contour)
         
-        mask_color = np.zeros_like(frame_gray)
+        mask_color = np.zeros_like(frame)
         mask_color[mask > 0] = [0, 255, 0]
         result = cv2.addWeighted(result, 0.7, mask_color, 0.3, 0)
         
