@@ -37,7 +37,7 @@ MODEL_PATH = "mask_rcnn_model.tflite"
 RESOLUTION_WIDTH = 640 
 MODEL_INPUT_SIZE = RESOLUTION_WIDTH # Ukuran input model (tinggi/lebar)
 
-FIXED_DISTANCE = 200     # cm
+FIXED_DISTANCE = 300     # cm
 CAMERA_FOV = 30.9        # derajat, sesuaikan dengan FOV horizontal kamera kamu
 
 TARGET_FPS = 10
@@ -131,12 +131,12 @@ def process_frame(frame, interpreter, input_idx, output_idx, lcd_display=None):
 
     # Kita hanya tertarik pada Kelas 1 (Tubuh)
     # Buat mask biner di mana piksel yang termasuk Kelas 1 disetel ke 255, lainnya 0
-    mask = (predicted_class_mask == 1).astype(np.uint8) * 255
+    mask = (predicted_class_mask == 2).astype(np.uint8) * 255
     
     # Debugging: print persentase piksel terdeteksi setelah argmax untuk kelas 1
     detected_pixels_after_arg_max = np.sum(mask > 0)
     total_pixels_in_mask = mask.size
-    print(f"Persentase piksel terdeteksi (kelas 1): {(detected_pixels_after_arg_max / total_pixels_in_mask) * 100:.2f}%")
+    print(f"Persentase piksel terdeteksi (kelas 2): {(detected_pixels_after_arg_max / total_pixels_in_mask) * 100:.2f}%")
 
     # Resize mask kembali ke ukuran frame asli dari kamera
     # Gunakan interpolation=cv2.INTER_NEAREST untuk mask biner agar tidak ada nilai abu-abu
@@ -188,7 +188,8 @@ def process_frame(frame, interpreter, input_idx, output_idx, lcd_display=None):
         # Hitung pengukuran dalam cm
         width_cm = w * PIXEL_TO_CM
         height_cm = h * PIXEL_TO_CM
-        
+	
+        send_start = time.time()
         # Kirim ke MQTT (konversi ke float standar Python untuk serialisasi JSON)
         mqtt_client.publish_measurement(
             height_cm=float(height_cm), 
@@ -196,7 +197,6 @@ def process_frame(frame, interpreter, input_idx, output_idx, lcd_display=None):
             confidence=float(confidence_percentage / 100.0), 
             class_id=1 # Class ID untuk tubuh
         )
-        
         # Tampilkan teks pengukuran dan confidence
         measurements = f"W: {width_cm:.1f}cm H: {height_cm:.1f}cm"
         confidence_text = f"Conf: {confidence_percentage:.1f}%"
@@ -220,6 +220,9 @@ def process_frame(frame, interpreter, input_idx, output_idx, lcd_display=None):
             lcd_display.display_measurements(width_cm, height_cm)
             # Anda mungkin ingin juga menampilkan confidence di LCD jika ada baris tambahan
             # atau menggabungkan dengan tinggi/lebar.
+        send_end = time.time()
+        send_duration = send_end - send_start
+        print(f"\Waktu pengiriman ke MQTT dan LCD: {send_duration:.3f} detik")
     else:
         print("\nTidak ada objek terdeteksi.")
         if lcd_display is not None:
